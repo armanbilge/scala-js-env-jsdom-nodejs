@@ -72,6 +72,7 @@ class JSDOMNodeJSEnv(config: JSDOMNodeJSEnv.Config) extends JSEnv {
     Map("NODE_MODULE_CONTEXTS" -> "0") ++ config.env
 
   private def codeWithJSDOMContext(scripts: List[Path]): List[Path] = {
+    require(scripts.size == 1)
     val scriptsURIs = scripts.map(JSDOMNodeJSEnv.materialize(_))
     val scriptsURIsAsJSStrings =
       scriptsURIs.map(uri => "\"" + escapeJS(uri.toASCIIString) + "\"")
@@ -79,54 +80,21 @@ class JSDOMNodeJSEnv(config: JSDOMNodeJSEnv.Config) extends JSEnv {
     val jsDOMCode = {
       s"""
          |(function () {
-         |  var jsdom = require("jsdom");
+         |  var { Miniflare } = require("miniflare");
          |
-         |  var virtualConsole = new jsdom.VirtualConsole()
-         |    .sendTo(console, { omitJSDOMErrors: true });
-         |  virtualConsole.on("jsdomError", function (error) {
-         |    /* #42 Counter-hack the hack that React's development mode uses
-         |     * to bypass browsers' debugging tools. If we detect that we are
-         |     * called from that hack, we do nothing.
-         |     */
-         |    var isWithinReactsInvokeGuardedCallbackDevHack_issue42 =
-         |      new Error("").stack.indexOf("invokeGuardedCallbackDev") >= 0;
-         |    if (isWithinReactsInvokeGuardedCallbackDevHack_issue42)
-         |      return;
-         |
-         |    try {
-         |      // Display as much info about the error as possible
-         |      if (error.detail && error.detail.stack) {
-         |        console.error("" + error.detail);
-         |        console.error(error.detail.stack);
-         |      } else {
-         |        console.error(error);
-         |      }
-         |    } finally {
-         |      // Whatever happens, kill the process so that the run fails
-         |      process.exit(1);
-         |    }
-         |  });
-         |
-         |  var dom = new jsdom.JSDOM("", {
-         |    virtualConsole: virtualConsole,
-         |    url: "http://localhost/",
-         |
-         |    /* Allow unrestricted <script> tags. This is exactly as
-         |     * "dangerous" as the arbitrary execution of script files we
-         |     * do in the non-jsdom Node.js env.
-         |     */
-         |    resources: "usable",
-         |    runScripts: "dangerously"
-         |  });
-         |
-         |  var window = dom.window;
-         |  window["scalajsCom"] = global.scalajsCom;
-         |
-         |  var scriptsSrcs = $scriptsURIsJSArray;
-         |  for (var i = 0; i < scriptsSrcs.length; i++) {
-         |    var script = window.document.createElement("script");
-         |    script.src = scriptsSrcs[i];
-         |    window.document.body.appendChild(script);
+         |  try {
+         |    var mf = new Miniflare({
+         |      sourceMap: true,
+         |      scriptPath: "${escapeJS(scripts.head.toString)}",
+         |      wranglerConfigPath: false,
+         |      packagePath: false,
+         |      watch: false,
+         |      globals: {
+         |        scalajsCom: global.scalajsCom
+         |      },
+         |    });
+         |  } finally {
+         |    process.exit(1);
          |  }
          |})();
          |""".stripMargin
